@@ -87,7 +87,7 @@ class _CrowlyAppState extends State<CrowlyApp> {
 
   void _newStore() {
     store?.dispose();
-    store = CrowlyStore(client: widget.client, demo: demo)..onLogout = _logout;
+    store = CrowlyStore(client: widget.client, demo: demo, demoRole: const String.fromEnvironment('DEMO_ROLE', defaultValue:'admin'))..onLogout = _logout;
     unawaited(store!.connect());
   }
 

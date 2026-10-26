@@ -23,6 +23,7 @@ class _ReportsPageState extends State<ReportsPage> {
   String? selected;
   @override
   Widget build(BuildContext context) {
+    if (!widget.store.isAdmin) return const AdminOnly();
     final reports = widget.store.rows('reports');
     final ids = reports.map((r) => r.text('event_id')).toSet();
     final events = widget.store
@@ -131,6 +132,7 @@ class EventReport extends StatelessWidget {
   final CrowlyRow event;
   @override
   Widget build(BuildContext context) {
+    if (!store.isAdmin) return const AdminOnly();
     final id = event.text('id');
     final reports = store.forEvent('reports', id);
     if (reports.isEmpty) {
@@ -242,6 +244,7 @@ class EventReport extends StatelessWidget {
 }
 
 Future<Uint8List> reportBytes(CrowlyStore store, CrowlyRow event) async {
+  if (!store.isAdmin) throw StateError('Relatórios são exclusivos do administrador.');
   final reports = store.forEvent('reports', event.text('id'));
   if (reports.isEmpty) throw StateError('Relatório não disponível');
   final report = reports.first;

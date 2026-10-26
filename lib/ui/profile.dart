@@ -3,6 +3,7 @@ import '../core/theme.dart';
 import '../data/store.dart';
 import 'widgets.dart';
 import 'iot.dart';
+import 'employees.dart';
 
 class ProfilePage extends StatefulWidget {
   const ProfilePage({super.key, required this.store, this.onLogout});
@@ -31,11 +32,13 @@ class _ProfilePageState extends State<ProfilePage> {
     summaries = p['profile_summaries'] == true;
     avatar = ((p['avatar_color'] as num?)?.toInt() ?? 0).clamp(0, 3);
     name.addListener(refresh);
+    widget.store.addListener(refresh);
   }
   void refresh() { if (mounted) setState(() {}); }
   @override
   void dispose() {
     name.removeListener(refresh);
+    widget.store.removeListener(refresh);
     for (final c in [name, phone, organization, role]) { c.dispose(); }
     super.dispose();
   }
@@ -84,6 +87,11 @@ class _ProfilePageState extends State<ProfilePage> {
             tooltip: 'Cor do avatar ${i + 1}', onPressed: busy ? null : () => setState(() => avatar = i),
             icon: Container(width: 28, height: 28, decoration: BoxDecoration(color: colors[i], shape: BoxShape.circle, border: Border.all(color: Colors.white, width: avatar == i ? 3 : 0)), child: avatar == i ? const Icon(Icons.check, size: 17, color: Colors.white) : null),
           ))),
+          Center(child: Pill(store.roleLabel)),
+          if (store.isAdmin) ...[
+            const SizedBox(height: 16),
+            OutlinedButton.icon(onPressed: () => Navigator.push(context, MaterialPageRoute<void>(builder: (_) => EmployeesPage(store: store))), icon: const Icon(Icons.manage_accounts_outlined), label: const Text('Funcionários')),
+          ],
           const Section('Dados pessoais'),
           Panel(child: Column(children: [
             field(name, 'Nome completo', Icons.person_outline, required: true),

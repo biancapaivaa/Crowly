@@ -51,7 +51,9 @@ class _CrowlyShellState extends State<CrowlyShell> {
           rootTab.value = v;
         },
         onProfile: () => profile(context),
-        body: store.loading && store.data.isEmpty
+        body: store.accountLoaded && !store.hasAccess && store.error == null
+            ? EmptyState(title: 'Conta sem acesso', description: 'Peça ao administrador para cadastrar sua conta. Se você é o primeiro admin, aplique a configuração indicada no guia.', action:'Sair da conta', onAction: () => unawaited(widget.onLogout()), icon: Icons.lock_outline)
+            : store.loading && store.data.isEmpty
             ? const LoadingEvents()
             : store.error != null
             ? EmptyState(
@@ -83,7 +85,7 @@ class _CrowlyShellState extends State<CrowlyShell> {
                         rootTab.value = 1;
                       },
                     ),
-                    3 => ReportsPage(
+                    3 => !store.isAdmin ? const AdminOnly() : ReportsPage(
                       store: store,
                       onEvents: () {
                         rootTab.value = 1;
@@ -120,7 +122,7 @@ class AppFrame extends StatelessWidget {
   final bool mapNavigation, back;
   @override
   Widget build(BuildContext context) {
-    final indices = mapNavigation ? [0, 1, 2, 4] : [0, 1, 2, 3, 4];
+    final indices = (mapNavigation ? [0, 1, 2, 4] : [0, 1, 2, 3, 4]).where((i) => i != 3 || store.isAdmin).toList();
     const labels = ['Home', 'Eventos', 'Dispositivos', 'Relatórios', 'Alertas'];
     const icons = [
       Icons.home_outlined,
@@ -184,7 +186,7 @@ class AppFrame extends StatelessWidget {
                     ],
                   ),
                 ),
-                Expanded(child: body),
+                Expanded(child: tab == 3 && !store.isAdmin ? const AdminOnly() : body),
                 Padding(
                   padding: const EdgeInsets.fromLTRB(20, 8, 20, 12),
                   child: Container(

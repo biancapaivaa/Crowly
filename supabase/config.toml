@@ -1,0 +1,4 @@
+# O JWT e validado por auth.getUser() dentro da funcao; o papel vem do banco.
+# Evita rejeicoes do gateway legado quando o projeto usa chaves JWT assimetricas.
+[functions.crowly-create-employee]
+verify_jwt = false

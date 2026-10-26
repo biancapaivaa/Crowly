@@ -238,7 +238,7 @@ class EventDetail extends StatelessWidget {
     final matches = store.rows('events').where((e) => e.text('id') == eventId);
     if (matches.isEmpty) return const Text('Evento não encontrado.');
     final e = matches.first;
-    if (e.text('status') == 'ended') return EventReport(store: store, event: e);
+    if (e.text('status') == 'ended' && store.isAdmin) return EventReport(store: store, event: e);
     final devices = store.forEvent('devices', eventId);
     final online = devices.where((d) => d.text('status') == 'online').length;
     final percent = devices.isEmpty ? 0.0 : online / devices.length;

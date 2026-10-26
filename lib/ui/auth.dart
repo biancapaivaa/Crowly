@@ -20,18 +20,13 @@ class AuthScreen extends StatefulWidget {
 
 class _AuthScreenState extends State<AuthScreen> {
   final form = GlobalKey<FormState>();
-  final name = TextEditingController(),
-      email = TextEditingController(),
-      password = TextEditingController(),
-      confirmation = TextEditingController();
-  bool register = false, hidden = true, confirmationHidden = true, busy = false;
+  final email = TextEditingController(), password = TextEditingController();
+  bool hidden = true, busy = false;
   String? message;
   @override
   void dispose() {
-    name.dispose();
     email.dispose();
     password.dispose();
-    confirmation.dispose();
     super.dispose();
   }
 
@@ -39,23 +34,7 @@ class _AuthScreenState extends State<AuthScreen> {
     if (!form.currentState!.validate()) return;
     setState(() => busy = true);
     try {
-      if (register) {
-        final response = await widget.client!.auth.signUp(
-          email: email.text.trim(),
-          password: password.text,
-          data: {'full_name': name.text.trim()},
-        );
-        if (mounted && response.session == null) {
-          setState(
-            () => message = 'Conta criada. Confirme seu e-mail para entrar.',
-          );
-        }
-      } else {
-        await widget.client!.auth.signInWithPassword(
-          email: email.text.trim(),
-          password: password.text,
-        );
-      }
+      await widget.client!.auth.signInWithPassword(email: email.text.trim(), password: password.text);
     } on AuthException catch (e) {
       if (mounted) setState(() => message = e.message);
     } catch (_) {
@@ -88,12 +67,11 @@ class _AuthScreenState extends State<AuthScreen> {
     String label,
     IconData icon, {
     bool secret = false,
-    bool confirmField = false,
   }) => Padding(
     padding: const EdgeInsets.only(bottom: 14),
     child: TextFormField(
       controller: controller,
-      obscureText: secret && (confirmField ? confirmationHidden : hidden),
+      obscureText: secret && hidden,
       keyboardType: label == 'E-mail'
           ? TextInputType.emailAddress
           : TextInputType.text,
@@ -102,7 +80,7 @@ class _AuthScreenState extends State<AuthScreen> {
       autofillHints: label == 'E-mail'
           ? const [AutofillHints.email]
           : secret
-          ? [register ? AutofillHints.newPassword : AutofillHints.password]
+          ? const [AutofillHints.password]
           : const [AutofillHints.name],
       decoration: InputDecoration(
         hintText: label,
@@ -111,14 +89,10 @@ class _AuthScreenState extends State<AuthScreen> {
             ? IconButton(
                 tooltip: 'Mostrar ou ocultar senha',
                 onPressed: () => setState(() {
-                  if (confirmField) {
-                    confirmationHidden = !confirmationHidden;
-                  } else {
-                    hidden = !hidden;
-                  }
+                  hidden = !hidden;
                 }),
                 icon: Icon(
-                  (confirmField ? confirmationHidden : hidden)
+                  hidden
                       ? Icons.visibility_off_outlined
                       : Icons.visibility_outlined,
                   size: 18,
@@ -131,12 +105,6 @@ class _AuthScreenState extends State<AuthScreen> {
         if (label == 'E-mail' &&
             !RegExp(r'^[^\s@]+@[^\s@]+\.[^\s@]+$').hasMatch(v.trim())) {
           return 'Informe um e-mail válido';
-        }
-        if (secret && register && v.length < 8) {
-          return 'Use pelo menos 8 caracteres';
-        }
-        if (confirmField && v != password.text) {
-          return 'As senhas não coincidem';
         }
         return null;
       },
@@ -163,14 +131,12 @@ class _AuthScreenState extends State<AuthScreen> {
                 ),
                 const SizedBox(height: 6),
                 Text(
-                  register ? 'Crie uma conta!' : 'Bem-vindo de volta!',
+                  'Bem-vindo de volta!',
                   style: Theme.of(context).textTheme.titleLarge,
                 ),
                 const SizedBox(height: 7),
                 Text(
-                  register
-                      ? 'Preencha os dados pra começar'
-                      : 'Entre com suas credenciais',
+                  'Entre com a conta criada pelo administrador',
                   style: const TextStyle(color: Colors.white),
                 ),
                 const SizedBox(height: 25),
@@ -180,8 +146,6 @@ class _AuthScreenState extends State<AuthScreen> {
                     key: form,
                     child: Column(
                       children: [
-                        if (register)
-                          field(name, 'Nome completo', Icons.person_outline),
                         field(email, 'E-mail', Icons.mail_outline),
                         field(
                           password,
@@ -189,16 +153,7 @@ class _AuthScreenState extends State<AuthScreen> {
                           Icons.lock_outline,
                           secret: true,
                         ),
-                        if (register)
-                          field(
-                            confirmation,
-                            'Confirmar senha',
-                            Icons.lock_outline,
-                            secret: true,
-                            confirmField: true,
-                          ),
-                        if (!register)
-                          Align(
+                                                  Align(
                             alignment: Alignment.centerRight,
                             child: TextButton(
                               onPressed: widget.client == null || busy
@@ -232,28 +187,7 @@ class _AuthScreenState extends State<AuthScreen> {
                                 : const Text('Entrar'),
                           ),
                         ),
-                        Wrap(
-                          alignment: WrapAlignment.center,
-                          crossAxisAlignment: WrapCrossAlignment.center,
-                          children: [
-                            Text(
-                              register
-                                  ? 'Já tem uma conta?'
-                                  : 'Não tem uma conta?',
-                              style: const TextStyle(color: Colors.white, fontSize: 11),
-                            ),
-                            TextButton(
-                              onPressed: busy
-                                  ? null
-                                  : () => setState(() {
-                                      register = !register;
-                                      message = null;
-                                      form.currentState?.reset();
-                                    }),
-                              child: Text(register ? 'Logar' : 'Cadastre-se'),
-                            ),
-                          ],
-                        ),
+                        const Padding(padding: EdgeInsets.only(top: 14), child: Text('O cadastro de funcionários é feito pelo administrador.', textAlign: TextAlign.center, style: TextStyle(color: Colors.white, fontSize: 11))),
                         TextButton(
                           onPressed: () => showDialog<void>(
                             context: context,

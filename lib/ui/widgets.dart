@@ -629,3 +629,17 @@ Future<void> runAction(
     if (context.mounted) toast(context, 'Não foi possível concluir: $e');
   }
 }
+
+
+class AdminOnly extends StatelessWidget {
+  const AdminOnly({super.key});
+  @override
+  Widget build(BuildContext context) => const Padding(
+    padding: EdgeInsets.all(24),
+    child: Column(mainAxisSize: MainAxisSize.min, children: [
+      Icon(Icons.lock_outline, color: Colors.white, size: 32),
+      SizedBox(height: 12),
+      Text('Acesso exclusivo do administrador', textAlign: TextAlign.center, style: TextStyle(color: Colors.white, fontSize: 18, fontWeight: FontWeight.bold)),
+    ]),
+  );
+}
