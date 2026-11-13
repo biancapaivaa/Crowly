@@ -1,4 +1,6 @@
 import 'dart:async';
+import 'dart:convert';
+import 'dart:math';
 
 import 'package:flutter/foundation.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
@@ -179,6 +181,8 @@ class CrowlyStore extends ChangeNotifier {
     required DateTime start,
     required DateTime end,
     required int capacity,
+    ({Uint8List bytes, String contentType})? photo,
+    CrowlyRow? event,
   }) async {
     final payload = <String, dynamic>{
       'title': title,
@@ -186,20 +190,104 @@ class CrowlyStore extends ChangeNotifier {
       'starts_at': start.toUtc().toIso8601String(),
       'ends_at': end.toUtc().toIso8601String(),
       'capacity': capacity,
-      'status': 'scheduled',
     };
+    final id = event?.text('id');
     if (demo) {
-      rows('events').add({
-        ...payload,
-        'id': 'event-${DateTime.now().microsecondsSinceEpoch}',
-        'people': 0,
-        'entries': 0,
-        'exits': 0,
-      });
+      if (photo != null) payload['photo_bytes'] = photo.bytes;
+      if (id == null) {
+        rows('events').add({
+          ...payload,
+          'id': 'event-${DateTime.now().microsecondsSinceEpoch}',
+          'status': 'scheduled',
+          'people': 0,
+          'entries': 0,
+          'exits': 0,
+        });
+      } else {
+        rows('events').firstWhere((row) => row.text('id') == id).addAll(payload);
+      }
       _emit();
-    } else {
-      await client!.from('events').insert(payload);
-      await load();
+      return;
+    }
+
+    final bucket = client!.storage.from('crowly-event-photos');
+    String? uploadedPath;
+    if (photo != null) {
+      final random = Random.secure();
+      final key = base64UrlEncode(List.generate(18, (_) => random.nextInt(256)));
+      uploadedPath = "${member!['workspace_id']}/$key";
+      await bucket.uploadBinary(
+        uploadedPath,
+        photo.bytes,
+        fileOptions: FileOptions(contentType: photo.contentType),
+      );
+      payload['image_url'] = bucket.getPublicUrl(uploadedPath);
+    }
+
+    try {
+      if (id == null) {
+        await client!.from('events').insert(payload);
+      } else {
+        var update = client!.from('events').update(payload).eq('id', id);
+        if (uploadedPath != null) {
+          final previous = event!['image_url'];
+          if (previous == null) {
+            update = update.isFilter('image_url', null);
+          } else {
+            update = update.eq('image_url', previous);
+          }
+        }
+        final saved = await update.select('id').maybeSingle();
+        if (saved == null) {
+          throw StateError('O evento mudou. Abra os detalhes e tente novamente.');
+        }
+      }
+    } catch (error) {
+      // Preserve the upload if a network failure leaves the database result unknown.
+      if (uploadedPath != null &&
+          (error is PostgrestException || error is StateError)) {
+        await _removeEventPhoto(bucket.getPublicUrl(uploadedPath));
+      }
+      rethrow;
+    }
+    if (uploadedPath != null && event != null) {
+      await _removeEventPhoto(event.text('image_url'));
+    }
+    await load();
+  }
+
+  Future<void> deleteEvent(String id) async {
+    if (demo) {
+      rows('events').removeWhere((row) => row.text('id') == id);
+      for (final table in tables.where((table) => table != 'events')) {
+        data[table]?.removeWhere((row) => row.text('event_id') == id);
+      }
+      if (selectedEventId == id) selectedEventId = null;
+      _emit();
+      return;
+    }
+    final deleted = await client!
+        .from('events')
+        .delete()
+        .eq('id', id)
+        .select('image_url')
+        .maybeSingle();
+    if (deleted == null) throw StateError('Evento não encontrado.');
+    if (selectedEventId == id) selectedEventId = null;
+    await _removeEventPhoto(deleted.text('image_url'));
+    await load();
+  }
+
+  Future<void> _removeEventPhoto(String url) async {
+    final bucket = client!.storage.from('crowly-event-photos');
+    final prefix = bucket.getPublicUrl("${member?['workspace_id']}/");
+    if (!url.startsWith(prefix)) return;
+    final key = url.substring(prefix.length);
+    if (!RegExp(r'^[a-zA-Z0-9_-]{24}$').hasMatch(key)) return;
+    try {
+      await bucket.remove(["${member!['workspace_id']}/$key"]);
+    } catch (error) {
+      debugPrint('Falha ao remover a foto anterior do evento: $error');
     }
   }
 

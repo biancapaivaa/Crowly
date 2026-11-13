@@ -1,3 +1,5 @@
+import 'dart:typed_data';
+
 import 'package:flutter/material.dart';
 
 import '../core/models.dart';
@@ -163,6 +165,13 @@ class Dashboard extends StatelessWidget {
   }
 }
 
+ImageProvider? eventPhoto(CrowlyRow event) {
+  final bytes = event['photo_bytes'];
+  if (bytes is Uint8List) return MemoryImage(bytes);
+  final url = event.text('image_url');
+  return url.startsWith('https://') ? NetworkImage(url) : null;
+}
+
 class EventBanner extends StatelessWidget {
   const EventBanner({super.key, required this.event, this.onTap});
   final CrowlyRow event;
@@ -170,6 +179,7 @@ class EventBanner extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final live = event.text('status') == 'live';
+    final photo = eventPhoto(event);
     return Panel(
       padding: 0,
       border: C.violet.withOpacity(.6),
@@ -182,9 +192,9 @@ class EventBanner extends StatelessWidget {
             end: Alignment.bottomLeft,
             colors: [Color(0xFF4C245A), C.background],
           ),
-          image: event.text('image_url').startsWith('https://')
+          image: photo != null
               ? DecorationImage(
-                  image: NetworkImage(event.text('image_url')),
+                  image: photo,
                   fit: BoxFit.cover,
                   colorFilter: ColorFilter.mode(
                     Colors.black.withOpacity(.65),
@@ -199,7 +209,11 @@ class EventBanner extends StatelessWidget {
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             Pill(
-              live ? '• AO VIVO' : 'EVENTO AGENDADO',
+              live
+                  ? '• AO VIVO'
+                  : event.text('status') == 'scheduled'
+                  ? 'EVENTO AGENDADO'
+                  : statusLabel(event.text('status')).toUpperCase(),
               color: live ? C.pink : C.violet,
             ),
             const SizedBox(height: 12),

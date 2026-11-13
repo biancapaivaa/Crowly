@@ -1,5 +1,9 @@
+import 'dart:typed_data';
+
 import 'package:flutter/material.dart';
+import 'package:image_picker/image_picker.dart';
 import 'package:intl/intl.dart';
+import 'package:mime/mime.dart';
 
 import '../core/models.dart';
 import '../core/theme.dart';
@@ -133,6 +137,7 @@ class _EventsPageState extends State<EventsPage> {
 
   Widget eventTile(BuildContext context, CrowlyRow event) {
     final ended = event.text('status') == 'ended';
+    final photo = eventPhoto(event);
     return Padding(
       padding: const EdgeInsets.only(bottom: 11),
       child: Panel(
@@ -156,17 +161,13 @@ class _EventsPageState extends State<EventsPage> {
                 ),
               ),
               clipBehavior: Clip.antiAlias,
-              child: event.text('image_url').startsWith('https://')
-                  ? Image.network(
-                      event.text('image_url'),
+              child: photo == null
+                  ? const Icon(Icons.festival_outlined, size: 32, color: Colors.white70)
+                  : Image(
+                      image: photo,
                       fit: BoxFit.cover,
                       errorBuilder: (_, __, ___) =>
                           const Icon(Icons.festival_outlined, size: 32),
-                    )
-                  : const Icon(
-                      Icons.festival_outlined,
-                      size: 32,
-                      color: Colors.white70,
                     ),
             ),
             const SizedBox(width: 12),
@@ -238,7 +239,15 @@ class EventDetail extends StatelessWidget {
     final matches = store.rows('events').where((e) => e.text('id') == eventId);
     if (matches.isEmpty) return const Text('Evento não encontrado.');
     final e = matches.first;
-    if (e.text('status') == 'ended' && store.isAdmin) return EventReport(store: store, event: e);
+    if (e.text('status') == 'ended' && store.isAdmin) {
+      return Column(
+        children: [
+          EventBanner(event: e),
+          EventActions(store: store, event: e),
+          EventReport(store: store, event: e),
+        ],
+      );
+    }
     final devices = store.forEvent('devices', eventId);
     final online = devices.where((d) => d.text('status') == 'online').length;
     final percent = devices.isEmpty ? 0.0 : online / devices.length;
@@ -252,6 +261,7 @@ class EventDetail extends StatelessWidget {
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         EventBanner(event: e),
+        EventActions(store: store, event: e),
         const SizedBox(height: 16),
         Panel(
           child: Column(
@@ -763,31 +773,169 @@ class _CalendarPageState extends State<CalendarPage> {
   }
 }
 
-Future<void> createEventDialog(BuildContext context, CrowlyStore store) =>
-    showModalBottomSheet<void>(
-      context: context,
-      isScrollControlled: true,
-      useSafeArea: true,
-      showDragHandle: true,
-      builder: (ctx) => CreateEventForm(store: store),
-    );
+class EventActions extends StatefulWidget {
+  const EventActions({super.key, required this.store, required this.event});
+  final CrowlyStore store;
+  final CrowlyRow event;
+
+  @override
+  State<EventActions> createState() => _EventActionsState();
+}
+
+class _EventActionsState extends State<EventActions> {
+  bool deleting = false;
+
+  Future<void> delete() async {
+    final event = widget.event;
+    if (!await confirm(
+      context,
+      'Excluir evento?',
+      'O evento “${event.text('title')}” e seus dados vinculados serão excluídos permanentemente.',
+    ) || !mounted) return;
+
+    setState(() => deleting = true);
+    final navigator = Navigator.of(context);
+    final route = ModalRoute.of(context);
+    final messenger = ScaffoldMessenger.of(context);
+    try {
+      await widget.store.deleteEvent(event.text('id'));
+      if (route?.isCurrent == true) navigator.pop();
+      if (messenger.mounted) {
+        messenger.showSnackBar(const SnackBar(content: Text('Evento excluído.')));
+      }
+    } catch (_) {
+      if (mounted) toast(context, 'Não foi possível excluir o evento. Tente novamente.');
+    } finally {
+      if (mounted) setState(() => deleting = false);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) => Padding(
+    padding: const EdgeInsets.symmetric(vertical: 12),
+    child: Wrap(
+      spacing: 8,
+      runSpacing: 8,
+      children: [
+        OutlinedButton.icon(
+          onPressed: deleting
+              ? null
+              : () => createEventDialog(context, widget.store, event: widget.event),
+          icon: const Icon(Icons.edit_outlined),
+          label: const Text('Editar evento'),
+        ),
+        OutlinedButton.icon(
+          onPressed: deleting ? null : delete,
+          icon: const Icon(Icons.delete_outline, color: C.red),
+          label: Text(deleting ? 'Excluindo...' : 'Excluir evento'),
+        ),
+      ],
+    ),
+  );
+}
+
+Future<void> createEventDialog(
+  BuildContext context,
+  CrowlyStore store, {
+  CrowlyRow? event,
+}) => showModalBottomSheet<void>(
+  context: context,
+  isScrollControlled: true,
+  useSafeArea: true,
+  showDragHandle: true,
+  builder: (ctx) => CreateEventForm(store: store, event: event),
+);
 
 class CreateEventForm extends StatefulWidget {
-  const CreateEventForm({super.key, required this.store});
+  const CreateEventForm({super.key, required this.store, this.event});
   final CrowlyStore store;
+  final CrowlyRow? event;
+
   @override
   State<CreateEventForm> createState() => _CreateEventFormState();
 }
 
 class _CreateEventFormState extends State<CreateEventForm> {
   final form = GlobalKey<FormState>();
-  final title = TextEditingController(),
-      location = TextEditingController(),
-      capacity = TextEditingController();
-  DateTime start = DateTime.now().add(const Duration(days: 1)),
-      end = DateTime.now().add(const Duration(days: 1, hours: 8));
+  late final TextEditingController title, location, capacity;
+  late DateTime start, end;
+  ({Uint8List bytes, String contentType})? photo;
   bool busy = false;
+  bool picking = false;
   String? error;
+
+  @override
+  void initState() {
+    super.initState();
+    final event = widget.event;
+    title = TextEditingController(text: event?.text('title'));
+    location = TextEditingController(text: event?.text('location'));
+    capacity = TextEditingController(text: event?.text('capacity'));
+    start = event?.date('starts_at') ?? DateTime.now().add(const Duration(days: 1));
+    end = event?.date('ends_at') ?? start.add(const Duration(hours: 8));
+  }
+
+  Future<void> pickPhoto() async {
+    setState(() {
+      picking = true;
+      error = null;
+    });
+    try {
+      final file = await ImagePicker().pickImage(
+        source: ImageSource.gallery,
+        maxWidth: 1600,
+        maxHeight: 1600,
+        imageQuality: 85,
+        requestFullMetadata: false,
+      );
+      if (file == null || !mounted) return;
+      if (await file.length() > 5 * 1024 * 1024) {
+        throw const FormatException('Escolha uma foto de até 5 MB.');
+      }
+      final bytes = await file.readAsBytes();
+      final type = lookupMimeType('', headerBytes: bytes);
+      if (type == null ||
+          !const ['image/jpeg', 'image/png', 'image/webp'].contains(type)) {
+        throw const FormatException('Escolha uma foto JPG, PNG ou WebP.');
+      }
+      if (mounted) setState(() => photo = (bytes: bytes, contentType: type));
+    } on FormatException catch (e) {
+      if (mounted) setState(() => error = e.message);
+    } catch (_) {
+      if (mounted) setState(() => error = 'Não foi possível abrir a foto.');
+    } finally {
+      if (mounted) setState(() => picking = false);
+    }
+  }
+
+  Future<void> save() async {
+    if (!form.currentState!.validate()) return;
+    if (!end.isAfter(start)) {
+      setState(() => error = 'O término precisa ser posterior ao início.');
+      return;
+    }
+    setState(() {
+      busy = true;
+      error = null;
+    });
+    try {
+      await widget.store.createEvent(
+        title: title.text.trim(),
+        location: location.text.trim(),
+        start: start,
+        end: end,
+        capacity: int.parse(capacity.text),
+        photo: photo,
+        event: widget.event,
+      );
+      if (mounted) Navigator.pop(context);
+    } catch (e) {
+      if (mounted) setState(() => error = 'Não foi possível salvar o evento: $e');
+    } finally {
+      if (mounted) setState(() => busy = false);
+    }
+  }
+
   @override
   void dispose() {
     title.dispose();
@@ -828,101 +976,98 @@ class _CreateEventFormState extends State<CreateEventForm> {
   }
 
   @override
-  Widget build(BuildContext context) => Padding(
-    padding: EdgeInsets.fromLTRB(
-      24,
-      8,
-      24,
-      24 + MediaQuery.viewInsetsOf(context).bottom,
-    ),
-    child: SingleChildScrollView(
-      child: Form(
-        key: form,
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Text('Novo evento', style: Theme.of(context).textTheme.titleLarge),
-            const SizedBox(height: 18),
-            TextFormField(
-              controller: title,
-              maxLength: 120,
-              decoration: const InputDecoration(labelText: 'Nome do evento'),
-              validator: (s) =>
-                  s == null || s.trim().isEmpty ? 'Informe o nome' : null,
-            ),
-            const SizedBox(height: 10),
-            TextFormField(
-              controller: location,
-              maxLength: 200,
-              decoration: const InputDecoration(labelText: 'Local'),
-              validator: (s) =>
-                  s == null || s.trim().isEmpty ? 'Informe o local' : null,
-            ),
-            const SizedBox(height: 10),
-            TextFormField(
-              controller: capacity,
-              keyboardType: TextInputType.number,
-              decoration: const InputDecoration(labelText: 'Capacidade máxima'),
-              validator: (s) => (int.tryParse(s ?? '') ?? 0) <= 0
-                  ? 'Informe uma capacidade maior que zero'
-                  : null,
-            ),
-            const SizedBox(height: 12),
-            OutlinedButton(
-              onPressed: busy ? null : () => pick(true),
-              child: Text(
-                'Início: ${DateFormat('dd/MM/yyyy HH:mm').format(start)}',
+  Widget build(BuildContext context) {
+    final editing = widget.event != null;
+    final selectedPhoto = photo;
+    final preview = selectedPhoto == null
+        ? (editing ? eventPhoto(widget.event!) : null)
+        : MemoryImage(selectedPhoto.bytes);
+    return Padding(
+      padding: EdgeInsets.fromLTRB(
+        24,
+        8,
+        24,
+        24 + MediaQuery.viewInsetsOf(context).bottom,
+      ),
+      child: SingleChildScrollView(
+        child: Form(
+          key: form,
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                editing ? 'Editar evento' : 'Novo evento',
+                style: Theme.of(context).textTheme.titleLarge,
               ),
-            ),
-            OutlinedButton(
-              onPressed: busy ? null : () => pick(false),
-              child: Text('Fim: ${DateFormat('dd/MM/yyyy HH:mm').format(end)}'),
-            ),
-            if (error != null)
-              Text(error!, style: const TextStyle(color: Colors.white)),
-            const SizedBox(height: 16),
-            SizedBox(
-              width: double.infinity,
-              child: FilledButton(
-                onPressed: busy
-                    ? null
-                    : () async {
-                        if (!form.currentState!.validate()) return;
-                        if (!end.isAfter(start)) {
-                          setState(
-                            () => error =
-                                'O término precisa ser posterior ao início.',
-                          );
-                          return;
-                        }
-                        setState(() => busy = true);
-                        try {
-                          await widget.store.createEvent(
-                            title: title.text.trim(),
-                            location: location.text.trim(),
-                            start: start,
-                            end: end,
-                            capacity: int.parse(capacity.text),
-                          );
-                          if (context.mounted) Navigator.pop(context);
-                        } catch (e) {
-                          if (mounted) {
-                            setState(
-                              () =>
-                                  error = 'Não foi possível criar o evento: $e',
-                            );
-                          }
-                        } finally {
-                          if (mounted) setState(() => busy = false);
-                        }
-                      },
-                child: Text(busy ? 'Criando...' : 'Criar evento'),
+              if (preview != null) ...[
+                const SizedBox(height: 12),
+                ClipRRect(
+                  borderRadius: BorderRadius.circular(9),
+                  child: Image(
+                    image: preview,
+                    height: 130,
+                    width: double.infinity,
+                    fit: BoxFit.cover,
+                    errorBuilder: (_, __, ___) => const Icon(Icons.broken_image_outlined),
+                  ),
+                ),
+              ],
+              OutlinedButton.icon(
+                onPressed: busy || picking ? null : pickPhoto,
+                icon: const Icon(Icons.add_photo_alternate_outlined),
+                label: Text(preview == null ? 'Adicionar foto' : 'Trocar foto'),
               ),
-            ),
-          ],
+              const SizedBox(height: 18),
+              TextFormField(
+                controller: title,
+                maxLength: 120,
+                decoration: const InputDecoration(labelText: 'Nome do evento'),
+                validator: (s) =>
+                    s == null || s.trim().isEmpty ? 'Informe o nome' : null,
+              ),
+              const SizedBox(height: 10),
+              TextFormField(
+                controller: location,
+                maxLength: 200,
+                decoration: const InputDecoration(labelText: 'Local'),
+                validator: (s) =>
+                    s == null || s.trim().isEmpty ? 'Informe o local' : null,
+              ),
+              const SizedBox(height: 10),
+              TextFormField(
+                controller: capacity,
+                keyboardType: TextInputType.number,
+                decoration: const InputDecoration(labelText: 'Capacidade máxima'),
+                validator: (s) => (int.tryParse(s ?? '') ?? 0) <= 0
+                    ? 'Informe uma capacidade maior que zero'
+                    : null,
+              ),
+              const SizedBox(height: 12),
+              OutlinedButton(
+                onPressed: busy ? null : () => pick(true),
+                child: Text(
+                  'Início: ${DateFormat('dd/MM/yyyy HH:mm').format(start)}',
+                ),
+              ),
+              OutlinedButton(
+                onPressed: busy ? null : () => pick(false),
+                child: Text('Fim: ${DateFormat('dd/MM/yyyy HH:mm').format(end)}'),
+              ),
+              if (error != null)
+                Text(error!, style: const TextStyle(color: Colors.white)),
+              const SizedBox(height: 16),
+              SizedBox(
+                width: double.infinity,
+                child: FilledButton(
+                  onPressed: busy || picking ? null : save,
+                  child: Text(busy ? 'Salvando...' : editing ? 'Salvar alterações' : 'Criar evento'),
+                ),
+              ),
+            ],
+          ),
         ),
       ),
-    ),
-  );
+    );
+  }
 }

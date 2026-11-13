@@ -12,7 +12,9 @@ dependencies:
     sdk: flutter
   cupertino_icons: ^1.0.8
   supabase_flutter: ^2.8.4
+  image_picker: ^1.2.0
   intl: ^0.20.2
+  mime: ^2.0.0
   pdf: ^3.11.3
   printing: ^5.14.2
 dev_dependencies:
